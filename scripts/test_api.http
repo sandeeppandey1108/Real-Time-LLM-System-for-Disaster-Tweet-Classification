@@ -1,0 +1,20 @@
+### Health
+GET http://localhost:8000/healthz
+
+### Predict one
+POST http://localhost:8000/predict
+Content-Type: application/json
+
+{
+  "text": "There is a fire downtown!",
+  "threshold": 0.5
+}
+
+### Batch
+POST http://localhost:8000/batch
+Content-Type: application/json
+
+{
+  "texts": ["Road is flooded!", "Coffee time :)"],
+  "threshold": 0.5
+}

@@ -1,0 +1,22 @@
+# Production-ish GPU image for training + serving
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends         git curl &&         rm -rf /var/lib/apt/lists/*
+
+# Python deps (pin important ones)
+RUN python -m pip install -U pip setuptools wheel &&         python -m pip install --no-cache-dir             "transformers==4.56.0"             "datasets>=2.18.0"             "accelerate>=0.33.0"             "evaluate>=0.4.2"             "scikit-learn==1.5.2"             "matplotlib==3.9.2"             "tiktoken==0.7.0"             "sentencepiece==0.2.0"             "fastapi==0.115.0"             "uvicorn[standard]==0.30.6"             "prometheus-client==0.20.0"             "streamlit==1.38.0"             "typer==0.12.5"             "rich==13.9.2"
+
+# Copy project (only what we need)
+COPY . /app
+
+# Add src to Python path (works even if package is not installed)
+ENV PYTHONPATH=/app/src:${PYTHONPATH}
+
+# Default ports
+EXPOSE 8000 8501
+
+# Default command -> FastAPI (overridden by docker run / compose)
+CMD ["python", "-m", "uvicorn", "ai_tweets.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
