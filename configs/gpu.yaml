@@ -7,4 +7,3 @@ learning_rate: 5e-5
 weight_decay: 0.01
 warmup_ratio: 0.1
 fp16: true
-bf16: false

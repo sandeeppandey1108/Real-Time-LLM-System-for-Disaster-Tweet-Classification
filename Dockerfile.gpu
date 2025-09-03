@@ -1,15 +1,21 @@
-# syntax=docker/dockerfile:1
+# Lightweight GPU-enabled image
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HOME=/root/.cache/huggingface
+
+# Basic tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# basics
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl && rm -rf /var/lib/apt/lists/*
-
+# Dependencies (pinned to avoid resolver breakage)
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
+# App code
 COPY . /app
-
-# install our package (provides the ai-tweets CLI)
-RUN python -m pip install -e .
