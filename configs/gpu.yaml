@@ -1,5 +1,6 @@
+# Training defaults for GPU
 seed: 42
-model_name: "microsoft/Multilingual-MiniLM-L12-H384"
+model_name: microsoft/Multilingual-MiniLM-L12-H384
 max_length: 192
 epochs: 3
 batch_size: 32

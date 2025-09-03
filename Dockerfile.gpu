@@ -1,16 +1,17 @@
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 ENV PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_DEFAULT_TIMEOUT=180 \
-    PIP_ROOT_USER_ACTION=ignore
+    PIP_ROOT_USER_ACTION=ignore \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
+
+# Copy and install Python deps
 COPY requirements.txt ./requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
-# Robust install: upgrade pip and add generous timeout/retries to avoid ReadTimeout
-RUN python -m pip install --upgrade pip && \
-    pip install --no-cache-dir --default-timeout=180 --retries=10 -r requirements.txt
-
+# Copy repo
 COPY . /app
+
+# Editable install of local package (ignore if not a package)
 RUN python -m pip install -e . || true
