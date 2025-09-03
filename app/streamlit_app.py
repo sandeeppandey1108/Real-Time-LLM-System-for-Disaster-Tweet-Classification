@@ -1,56 +1,37 @@
+import os
+import torch
 import streamlit as st
-import requests, os, torch
-from transformers import pipeline
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    TextClassificationPipeline,
+)
 
-st.set_page_config(page_title="Disaster Tweet Classifier", layout="centered")
+MODEL_DIR = os.environ.get("MODEL_DIR", "/app/artifacts/checkpoints/final")
 
-st.title("🔎 Disaster Tweet Classifier")
-st.caption("Type a tweet and classify it as **disaster** or **non_disaster**.")
+# Force offline/local loading
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
-text = st.text_area("Tweet text", "", height=120, placeholder="There is a fire downtown!")
+@st.cache_resource
+def load_pipeline():
+    tok = AutoTokenizer.from_pretrained(MODEL_DIR, local_files_only=True)
+    mdl = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR, local_files_only=True)
+    device = 0 if torch.cuda.is_available() else -1
+    return TextClassificationPipeline(
+        model=mdl,
+        tokenizer=tok,
+        device=device,
+        truncation=True,
+        return_all_scores=True,
+    )
 
-col1, col2 = st.columns(2)
-use_api = col1.toggle("Use local API (http://localhost:8000)", value=True)
-score_bar = col2.toggle("Show score bar", value=True)
+st.title("Disaster Tweet Classifier")
+st.caption("Fast demo using your fine-tuned checkpoint")
 
-btn = st.button("Predict", type="primary")
+clf = load_pipeline()
+text = st.text_area("Tweet text", placeholder="Type or paste a tweet…")
 
-API_URL = "http://host.docker.internal:8000/predict"  # works on Docker Desktop (Windows/Mac)
-
-@st.cache_resource(show_spinner=False)
-def get_local_pipeline():
-    try:
-        MODEL_DIR = "/app/artifacts/checkpoints/final"
-        DEVICE = 0 if torch.cuda.is_available() else -1
-        return pipeline("text-classification", model=MODEL_DIR, tokenizer=MODEL_DIR, device=DEVICE, truncation=True)
-    except Exception as e:
-        st.warning(f"Pipeline fallback failed: {e}")
-        return None
-
-if btn and text.strip():
-    if use_api:
-        try:
-            r = requests.post(API_URL, json={"text": text}, timeout=10)
-            r.raise_for_status()
-            data = r.json()
-            label, score = data["label"], float(data["score"])
-        except Exception as e:
-            st.warning(f"API not reachable ({e}). Falling back to local pipeline.")
-            pipe = get_local_pipeline()
-            if pipe is None:
-                st.error("No inference path available.")
-            else:
-                out = pipe(text)[0]
-                label, score = out["label"], float(out["score"])
-    else:
-        pipe = get_local_pipeline()
-        if pipe is None:
-            st.error("Local pipeline not available.")
-        else:
-            out = pipe(text)[0]
-            label, score = out["label"], float(out["score"])
-
-    if 'label' in locals():
-        st.markdown(f"### Prediction: `{label}`")
-        if score_bar:
-            st.progress(min(max(score, 0.0), 1.0), text=f"Confidence: {score:.3f}")
+if st.button("Predict") and text.strip():
+    scores = clf(text)[0]
+    st.write({s["label"]: round(float(s["score"]), 4) for s in scores})
