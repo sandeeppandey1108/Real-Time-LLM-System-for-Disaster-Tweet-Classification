@@ -1,75 +1,52 @@
-import os
+
+import os, json
 import streamlit as st
-from transformers import pipeline, AutoConfig
 import torch
-import requests
+from transformers import pipeline
+from pathlib import Path
 
 st.set_page_config(page_title="Disaster Tweet Classifier", page_icon="🚨", layout="centered")
+ART_DIR = Path("/app/artifacts") if Path("/app").exists() else Path("artifacts")
+MODEL_DIR = os.environ.get("MODEL_DIR", str(ART_DIR / "checkpoints" / "final"))
+DEVICE = 0 if torch.cuda.is_available() else -1
+
+@st.cache_resource
+def load_pipeline():
+    return pipeline("text-classification", model=MODEL_DIR, tokenizer=MODEL_DIR, device=DEVICE, truncation=True)
+
+clf = load_pipeline()
 st.title("🚨 Disaster Tweet Classifier")
-st.caption("Binary classifier: **disaster** vs **non_disaster**")
+st.caption("GPU aware • HF Transformers • FastAPI & Streamlit")
 
-mode = st.sidebar.radio("Mode", ["Use REST API", "Use Local Model"], index=0)
-api_url = st.sidebar.text_input("API URL", os.environ.get("API_URL", "http://localhost:8000"))
-threshold = st.sidebar.slider("Decision threshold (disaster)", 0.0, 1.0, 0.50, 0.01)
+col1, col2 = st.columns(2)
+with col1: th = st.slider("Decision threshold (disaster)", 0.0, 1.0, 0.5, 0.01)
+with col2: st.write("Device:", "CUDA" if DEVICE == 0 else "CPU")
 
-examples = [
-    "There is a fire downtown!",
-    "Earthquake near city",
-    "Lovely day in the park",
-    "Coffee time :)",
-    "Road is flooded!",
-    "Nothing to report",
-]
-ex = st.selectbox("Examples", examples, index=0)
-text = st.text_area("Your tweet", ex, height=100)
+st.header("Try it")
+txt = st.text_area("Tweet text", "There is a fire downtown!")
+if st.button("Predict"):
+    out = clf(txt)[0]
+    prob = out["score"] if out["label"].lower().endswith("disaster") else 1 - out["score"]
+    pred = "disaster" if prob >= th else "non_disaster"
+    st.write(f"**Pred:** {pred}  •  **Score:** {prob:.3f}  •  Raw: {out}")
 
-def call_api(t: str):
-    r = requests.post(f"{api_url}/predict", json={"text": t, "threshold": threshold}, timeout=20)
-    r.raise_for_status()
-    return r.json()
+st.header("Batch")
+batch = st.text_area("One tweet per line", "Flood on Main St\nCoffee time :)")
+if st.button("Batch predict"):
+    lines = [l.strip() for l in batch.splitlines() if l.strip()]
+    outs = clf(lines)
+    rows = []
+    for text, o in zip(lines, outs):
+        prob = o[0]["score"] if o[0]["label"].lower().endswith("disaster") else 1 - o[0]["score"]
+        pred = "disaster" if prob >= th else "non_disaster"
+        rows.append({"text": text, "pred": pred, "score": round(prob,3)})
+    st.dataframe(rows, use_container_width=True)
 
-if mode == "Use Local Model":
-    MODEL_DIR = os.environ.get("MODEL_DIR", "/app/artifacts/checkpoints/final")
-    device = 0 if torch.cuda.is_available() else -1
-    clf = pipeline("text-classification", model=MODEL_DIR, tokenizer=MODEL_DIR, device=device, return_all_scores=True, truncation=True)
-    cfg = AutoConfig.from_pretrained(MODEL_DIR)
-    id2label = getattr(cfg, "id2label", {0:"LABEL_0", 1:"LABEL_1"})
-    st.info(f"Using local model from {MODEL_DIR} on {'GPU' if device>=0 else 'CPU'}")
-
-    def local_predict(t: str):
-        probs = clf(t)[0]
-        p1 = [d for d in probs if d['label'] in ('disaster', 'LABEL_1')]
-        score = float(p1[0]['score']) if p1 else float(max(probs, key=lambda x:x['score'])['score'])
-        label = "disaster" if score >= threshold else "non_disaster"
-        return {"label": label, "score": score, "above_threshold": score >= threshold}
-
-if st.button("Classify"):
-    with st.spinner("Running..."):
-        try:
-            result = call_api(text) if mode == "Use REST API" else local_predict(text)
-            score_pct = round(result["score"] * 100, 1)
-            if result["label"] == "disaster":
-                st.success(f"Prediction: **DISASTER** ({score_pct}%)")
-            else:
-                st.warning(f"Prediction: **NON-DISASTER** ({score_pct}%)")
-            st.progress(result["score"])
-        except Exception as e:
-            st.error(str(e))
+st.header("Metrics & Confusion Matrix")
+mpath = ART_DIR / "metrics.json"
+if mpath.exists(): st.json(json.loads(mpath.read_text()))
+img = ART_DIR / "confusion_matrix.png"
+if img.exists(): st.image(str(img), caption="Confusion Matrix", use_column_width=True)
 
 st.divider()
-st.subheader("Batch test")
-batch = st.text_area("One per line", "\n".join(examples[:3]), height=140)
-if st.button("Run batch"):
-    items = [s for s in batch.splitlines() if s.strip()]
-    with st.spinner("Batching..."):
-        try:
-            if mode == "Use REST API":
-                r = requests.post(f"{api_url}/batch", json={"texts": items, "threshold": threshold}, timeout=60)
-                r.raise_for_status()
-                out = r.json()["results"]
-            else:
-                out = [local_predict(s) for s in items]
-            for s, o in zip(items, out):
-                st.write(f"- {s} → **{o['label']}** ({o['score']:.3f})")
-        except Exception as e:
-            st.error(str(e))
+st.caption("Tip: Use the FastAPI at /predict and /batch_predict for production.")

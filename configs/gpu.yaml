@@ -1,4 +1,4 @@
-# Training config (used by ai-tweets train)
+
 seed: 42
 model_name: microsoft/Multilingual-MiniLM-L12-H384
 max_length: 192
@@ -9,7 +9,6 @@ weight_decay: 0.01
 warmup_ratio: 0.1
 fp16: true
 bf16: false
-output_dir: artifacts/checkpoints/final
-eval_strategy: epoch
-save_final: true
-n_eval_fallback: 2   # if no val.csv, split last N examples for eval
+eval_steps: 50
+logging_steps: 10
+save_total_limit: 1

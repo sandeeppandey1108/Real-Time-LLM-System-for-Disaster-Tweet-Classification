@@ -1,0 +1,6 @@
+__pycache__
+.git
+.venv
+artifacts
+data
+*.ipynb
