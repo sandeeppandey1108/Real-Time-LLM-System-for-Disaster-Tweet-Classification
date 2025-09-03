@@ -1,16 +1,13 @@
-
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "disaster-tweets-llm-pro"
 version = "0.3.0"
-description = "End-to-end crisis tweet classification with Transformers, FastAPI, and Streamlit."
+description = "End-to-end disaster tweet classification with FastAPI + Streamlit"
 readme = "README.md"
-requires-python = ">=3.9"
-authors = [{name="You", email="you@example.com"}]
-dependencies = []
+requires-python = ">=3.10"
 
 [project.scripts]
 ai-tweets = "ai_tweets.cli:cli"

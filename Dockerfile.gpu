@@ -1,9 +1,15 @@
-
+# syntax=docker/dockerfile:1
 FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
-RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+
+# basics
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --no-cache-dir -r requirements.txt
+
 COPY . /app
+
+# install our package (provides the ai-tweets CLI)
 RUN python -m pip install -e .
-EXPOSE 8000 8501
