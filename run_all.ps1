@@ -1,82 +1,92 @@
 param(
-  [string]$Image = "sandeep_pandey/crisis-llm:gpu-latest",
+  [Parameter(Mandatory = $true)]
+  [string]$Image,
+
+  [string]$Proc    = "$PSScriptRoot\data\processed",
+  [string]$Arts    = "$PSScriptRoot\artifacts",
+  [int]$ApiPort    = 8000,
+  [int]$UiPort     = 8501,
   [switch]$StartApi = $true,
-  [switch]$StartUI = $true
+  [switch]$StartUI  = $true
 )
 
-$ErrorActionPreference = "Stop"
-$RepoRoot = (Get-Location).Path
-$Proc  = Join-Path $RepoRoot "data\processed"
-$Arts  = Join-Path $RepoRoot "artifacts"
-
+# 1) Data check
 Write-Host "[1/4] Preparing data..."
-# Ensure artifacts dir exists
-New-Item -ItemType Directory -Force -Path $Arts | Out-Null
+New-Item -ItemType Directory -Path $Arts -Force | Out-Null
 
 $trainCsv = Join-Path $Proc "train.csv"
 $valCsv   = Join-Path $Proc "val.csv"
-if ( (Test-Path $trainCsv) -and (Test-Path $valCsv) ) {
+
+if ((Test-Path -LiteralPath $trainCsv) -and (Test-Path -LiteralPath $valCsv)) {
   Write-Host "  Skipping: found processed/train.csv and processed/val.csv"
 } else {
-  Write-Warning "  Expected CSVs not found in data\processed. Put train.csv and val.csv there."
+  Write-Host "  ERROR: Missing processed csvs at $Proc" -ForegroundColor Yellow
+  Write-Host "  Expected:"
+  Write-Host "   $trainCsv"
+  Write-Host "   $valCsv"
+  throw "Place your pre-split train/val CSVs in $Proc, then rerun."
 }
 
+# 2) Train
 Write-Host "[2/4] Training model..."
-# Train with your local CSVs mounted into the container
-# Also upgrades accelerate to avoid keep_torch_compile error seen earlier
-$trainCmd = @"
-python -m pip install -q --upgrade 'accelerate>=1.2.1' || true
-export PYTHONPATH=/app/src
+
+$trainCmd = @'
+export PYTHONPATH=/app/src;
 python -u -m ai_tweets.cli train \
   --config configs/gpu.yaml \
   --train-csv data/train.csv \
   --eval-csv  data/val.csv
-"@
+'@
 
 docker run --rm --gpus all `
+  -e TRANSFORMERS_VERBOSITY=info `
   -e HF_HUB_DISABLE_TELEMETRY=1 `
   -v "${Proc}:/app/data" `
   -v "${Arts}:/app/artifacts" `
-  $Image sh -lc "$trainCmd"
+  $Image bash -lc $trainCmd
 
 if ($LASTEXITCODE -ne 0) {
-  throw "docker run (training) failed with exit code $LASTEXITCODE"
+  throw "Training failed (exit $LASTEXITCODE)"
 }
 
+$ModelDir = "/app/artifacts/checkpoints/final"
+
+# 3) API
 if ($StartApi) {
-  Write-Host "[3/4] Starting API on http://localhost:8000 ..."
-  # Stop an old container if running
-  try { docker stop crisis-api | Out-Null } catch { }
+  Write-Host "[3/4] Starting API on http://localhost:$ApiPort ..."
+  docker rm -f crisis-api 2>$null | Out-Null
 
   docker run -d --rm --name crisis-api --gpus all `
-    -p 8000:8000 `
+    -p ${ApiPort}:8000 `
     -v "${Arts}:/app/artifacts" `
-    $Image sh -lc "export PYTHONPATH=/app/src; uvicorn ai_tweets.api:app --host 0.0.0.0 --port 8000"
+    -e MODEL_DIR="$ModelDir" `
+    -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 `
+    $Image uvicorn ai_tweets.api:app --host 0.0.0.0 --port 8000 --log-level info | Out-Null
 
   Start-Sleep -Seconds 3
   try {
-    $resp = Invoke-WebRequest -UseBasicParsing http://localhost:8000/healthz -TimeoutSec 5
-    if ($resp.StatusCode -eq 200) {
-      Write-Host "  API is healthy." -ForegroundColor Green
-    } else {
-      Write-Host "  API returned status $($resp.StatusCode). Check logs: docker logs crisis-api" -ForegroundColor Yellow
-    }
+    $resp = Invoke-RestMethod -Uri "http://127.0.0.1:${ApiPort}/healthz" -TimeoutSec 5 -ErrorAction Stop
+    if ($resp.ok -ne $true) { throw "unhealthy" }
+    Write-Host "  API healthy." -ForegroundColor Green
   } catch {
-    Write-Host "  API health check failed (you can still visit /docs). Check logs: docker logs crisis-api" -ForegroundColor Yellow
+    Write-Host "  (health check skipped/failed — try http://localhost:${ApiPort}/docs)" -ForegroundColor Yellow
   }
 }
 
+# 4) UI
 if ($StartUI) {
-  Write-Host "[4/4] Launching Streamlit at http://localhost:8501 ..."
-  try { docker stop crisis-ui | Out-Null } catch { }
+  Write-Host "[4/4] Launching Streamlit at http://localhost:$UiPort ..."
+  docker rm -f crisis-ui 2>$null | Out-Null
 
-  docker run -d --rm --name crisis-ui `
-    -p 8501:8501 `
+  docker run -d --rm --name crisis-ui --gpus all `
+    -p ${UiPort}:8501 `
     -v "${Arts}:/app/artifacts" `
-    $Image sh -lc "export PYTHONPATH=/app/src; streamlit run apps/streamlit_app.py --server.port 8501 --server.address 0.0.0.0"
+    -e MODEL_DIR="$ModelDir" `
+    -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 `
+    $Image streamlit run src/ai_tweets/streamlit_app.py --server.port 8501 --browser.gatherUsageStats false | Out-Null
 
-  Write-Host "Done. Visit:"
-  Write-Host "  - API docs:     http://localhost:8000/docs"
-  Write-Host "  - Streamlit UI: http://localhost:8501"
+  Write-Host "Done. Visit:" -ForegroundColor Green
+  Write-Host "  - API docs:     http://localhost:${ApiPort}/docs"
+  Write-Host "  - Streamlit UI: http://localhost:${UiPort}"
   Write-Host "Artifacts in $Arts (model, metrics, confusion_matrix.png)"
 }

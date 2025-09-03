@@ -1,31 +1,40 @@
-import os, requests, json
+import os
+import torch
 import streamlit as st
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    TextClassificationPipeline,
+)
 
-st.set_page_config(page_title="Disaster Tweet Classifier", page_icon="🚨", layout="centered")
-st.title("🚨 Disaster Tweet Classifier")
-st.caption("FastAPI + Streamlit · Multilingual MiniLM")
+# Where the trained model is mounted in the container
+MODEL_DIR = os.environ.get("MODEL_DIR", "/app/artifacts/checkpoints/final")
 
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
+# Force offline/local cache usage to avoid HF Hub lookups
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
-with st.sidebar:
-    st.markdown("**API**")
-    st.write(API_URL)
-    if st.button("Health check"):
-        try:
-            resp = requests.get(f"{API_URL}/healthz", timeout=10).json()
-            st.success(resp)
-        except Exception as e:
-            st.error(f"Health check failed: {e}")
+@st.cache_resource
+def load_pipeline():
+    tok = AutoTokenizer.from_pretrained(MODEL_DIR, local_files_only=True)
+    mdl = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR, local_files_only=True)
+    device = 0 if torch.cuda.is_available() else -1
+    return TextClassificationPipeline(
+        model=mdl,
+        tokenizer=tok,
+        device=device,
+        truncation=True,
+        return_all_scores=True,
+    )
 
-txt = st.text_area("Enter a tweet", "There is a fire downtown!", height=120)
-if st.button("Classify"):
-    try:
-        r = requests.post(f"{API_URL}/predict", json={"text": txt}, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-        label = data.get("label")
-        score = data.get("score")
-        st.metric("Prediction", label, delta=f"{score:.4f}")
-        st.progress(min(max(score, 0.0), 1.0))
-    except Exception as e:
-        st.error(f"Request failed: {e}")
+st.title("Disaster Tweet Classifier")
+st.caption("Fast demo using your fine-tuned checkpoint")
+
+clf = load_pipeline()
+
+text = st.text_area("Tweet text", placeholder="Type or paste a tweet…")
+
+if st.button("Predict") and text.strip():
+    scores = clf(text)[0]
+    # Show rounded scores
+    st.write({s["label"]: round(float(s["score"]), 4) for s in scores})
