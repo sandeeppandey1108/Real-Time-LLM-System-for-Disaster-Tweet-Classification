@@ -1,68 +1,83 @@
+from __future__ import annotations
+import os, re, html, json
 from pathlib import Path
+from typing import Optional, Tuple, List
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from typing import Dict, Any
 
-LABELS = {"non_disaster": 0, "disaster": 1}
+URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+MULTISPACE_RE = re.compile(r"\s+")
 
-def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
-    cols = [c.lower() for c in df.columns]
-    df.columns = cols
-    # find text col
-    text_col = "text" if "text" in df.columns else cols[0]
-    # find label col
-    label_col = "target" if "target" in df.columns else ("label" if "label" in df.columns else None)
-    if label_col is None:
-        # return empty to signal unlabeled
-        return pd.DataFrame(columns=["text", "target"])
-    out = pd.DataFrame({
-        "text": df[text_col].astype(str).str.strip(),
-        "target": df[label_col],
-    })
-    # map string labels if any
-    if out["target"].dtype == "object":
-        out["target"] = out["target"].str.lower().map(LABELS)
-    out = out.dropna(subset=["text", "target"])
-    out = out[out["text"].str.len() > 0]
-    out = out.drop_duplicates(subset=["text"]).reset_index(drop=True)
-    # coerce to int 0/1 if possible
-    out["target"] = out["target"].astype(int)
-    out = out[out["target"].isin([0,1])]
-    return out
+def _read_csvs(folder: Path) -> List[pd.DataFrame]:
+    dfs = []
+    for name in ["train.csv", "val.csv", "valid.csv", "dev.csv", "test.csv", "submission.csv"]:
+        p = folder / name
+        if p.exists():
+            try:
+                df = pd.read_csv(p)
+                df["__source"] = name
+                dfs.append(df)
+            except Exception:
+                pass
+    return dfs
 
-def prepare(raw_dir: str, out_dir: str, val_ratio: float=0.2) -> Dict[str, Any]:
+def _detect_cols(df: pd.DataFrame, text_col: Optional[str], label_col: Optional[str]):
+    tcol = text_col or ("text" if "text" in df.columns else df.columns[0])
+    lcol = None
+    for cand in ["target", "label", "labels", "y"]:
+        if cand in df.columns:
+            lcol = cand
+            break
+    if label_col:
+        lcol = label_col
+    return tcol, lcol
+
+def _clean_text(s: str) -> str:
+    if not isinstance(s, str):
+        s = str(s)
+    s = html.unescape(s)
+    s = URL_RE.sub(" ", s)
+    s = s.replace("&amp;", "&")
+    s = MULTISPACE_RE.sub(" ", s).strip()
+    return s
+
+def prepare(raw_dir: str, out_dir: str, text_col: Optional[str]=None, label_col: Optional[str]=None, val_size: float=0.2, seed: int=42):
     raw = Path(raw_dir)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    dfs = []
-    for p in raw.glob("*.csv"):
-        try:
-            df = pd.read_csv(p)
-            df = _normalize_df(df)
-            if len(df):
-                dfs.append(df)
-        except Exception as e:
-            print(f"Skipping {p.name}: {e}")
+    dfs = _read_csvs(raw)
     if not dfs:
-        raise FileNotFoundError(f"No labeled rows found in {raw.resolve()}")
+        return str(out / "train.csv"), str(out / "val.csv")
 
-    all_df = pd.concat(dfs, ignore_index=True).drop_duplicates(subset=["text"]).reset_index(drop=True)
+    labeled = []
+    for df in dfs:
+        tcol, lcol = _detect_cols(df, text_col, label_col)
+        if lcol is None:
+            continue
+        sub = df[[tcol, lcol]].rename(columns={tcol: "text", lcol: "target"}).copy()
+        labeled.append(sub)
 
-    # Stratified split
-    train_df, val_df = train_test_split(all_df, test_size=val_ratio, random_state=42, stratify=all_df["target"])
+    if not labeled:
+        raise ValueError("No labeled CSV with a target/label column was found in raw dir.")
+
+    data = pd.concat(labeled, axis=0, ignore_index=True)
+    data["text"] = data["text"].astype(str).map(_clean_text)
+
+    if data["target"].dtype == "object":
+        data["target"] = data["target"].str.strip().str.lower().map({"non_disaster":0,"disaster":1}).fillna(data["target"])
+    data["target"] = pd.to_numeric(data["target"], errors="coerce").fillna(0).astype(int).clip(0,1)
+
+    data = data.drop_duplicates(subset=["text"]).reset_index(drop=True)
+
+    train_df, val_df = train_test_split(
+        data, test_size=val_size, random_state=seed, stratify=data["target"] if data["target"].nunique()>1 else None
+    )
+    train_df = train_df.reset_index(drop=True)
+    val_df = val_df.reset_index(drop=True)
 
     train_path = out / "train.csv"
     val_path = out / "val.csv"
     train_df.to_csv(train_path, index=False)
     val_df.to_csv(val_path, index=False)
-
-    return {
-        "raw_dir": str(raw.resolve()),
-        "out_dir": str(out.resolve()),
-        "n_all": len(all_df),
-        "n_train": len(train_df),
-        "n_val": len(val_df),
-        "train_csv": str(train_path),
-        "val_csv": str(val_path),
-    }
+    return str(train_path), str(val_path)
