@@ -1,12 +1,16 @@
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
-ENV PIP_ROOT_USER_ACTION=ignore     PIP_NO_CACHE_DIR=1     PIP_DISABLE_PIP_VERSION_CHECK=1     HF_HUB_DISABLE_TELEMETRY=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm -rf /var/lib/apt/lists/*
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=180 \
+    PIP_ROOT_USER_ACTION=ignore
 
 WORKDIR /app
 COPY requirements.txt ./requirements.txt
-RUN python -m pip install --no-cache-dir -r requirements.txt
+
+# Robust install: upgrade pip and add generous timeout/retries to avoid ReadTimeout
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir --default-timeout=180 --retries=10 -r requirements.txt
 
 COPY . /app
 RUN python -m pip install -e . || true
