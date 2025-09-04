@@ -1,89 +1,86 @@
+# 🚨 Real‑Time LLM System for Disaster Tweet Classification
 
-# Real-Time LLM System for Disaster Tweet Classification
+[![Docker](https://img.shields.io/badge/Containerized-Docker-informational?logo=docker)](https://www.docker.com/)
+[![Transformers](https://img.shields.io/badge/NLP-Transformers-blue?logo=huggingface)](https://huggingface.co/docs/transformers)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B?logo=streamlit)](https://streamlit.io/)
+[![GPU Ready](https://img.shields.io/badge/Accelerated-GPU%20Ready-6C8EBF?logo=nvidia)](https://developer.nvidia.com/)
 
-A reproducible, Dockerized system that **fine-tunes a multilingual transformer** to classify tweets as **disaster** or **non-disaster**, and serves the model via **FastAPI** and a **Streamlit** UI.
-
-> **Windows-first:** One PowerShell script (`run_all.ps1`) trains and launches everything. Works on GPU (preferred) or CPU.
-
----
-
-## 🔎 Highlights
-- **Model:** `microsoft/Multilingual-MiniLM-L12-H384` fine-tuned with Hugging Face Transformers
-- **Data:** `data/processed/train.csv` & `data/processed/val.csv` (two columns: `text`, `labels`)
-- **Artifacts:** Saved to `artifacts/checkpoints/final` (model, tokenizer, metrics, confusion matrix)
-- **Serving:** FastAPI (`/predict`, `/healthz`, Swagger at `/docs`), Streamlit demo UI
-- **Dockerized:** Single image for training + inference, GPU-ready (falls back to CPU)
-- **Offline-first:** UI/API load **local** checkpoint from `MODEL_DIR` (no Hub dependency)
+> Fast, reproducible pipeline to **fine‑tune** a multilingual transformer and **serve** it with **FastAPI** (inference endpoint) and **Streamlit** (demo UI). Built for Windows with Docker; GPU‑first but works on CPU.
 
 ---
 
-## 🧭 System Architecture
+## ✨ Highlights
+
+- 🔁 **End‑to‑end script:** `run_all.ps1` trains + launches API & UI
+- ⚡ **Efficient model:** `microsoft/Multilingual-MiniLM-L12-H384`
+- 📦 **Containerized:** single image for train / serve / UI
+- 🧰 **Offline‑first:** loads **local** checkpoint (`artifacts/checkpoints/final`) — no Hub calls
+- 📊 **Artifacts:** metrics + `confusion_matrix.png` + saved tokenizer/model
+- 🧪 **Swagger docs:** `GET /docs` for quick API testing
+
+---
+
+## 🗺️ Architecture (at a glance)
 
 ```
-User Browser
-   │
-   │  HTTP (localhost:8501)
-   ▼
-+---------------------+
-|  Streamlit (UI)     |  ← container: $Image
-|  Port: 8501         |
-+----------+----------+
-           │  REST call (/predict)
-           │  HTTP (localhost:8000)
-           ▼
-+---------------------+
-|  FastAPI (API)      |  ← container: $Image
-|  Endpoints:         |      /healthz, /predict, /docs
-|  Port: 8000         |
-+----------+----------+
-           │  reads
-           ▼
-+-------------------------------+
-|  Model Artifacts (Volume)     |
-|  host: artifacts/checkpoints/ |
-|  container: /app/artifacts/   |
-+-------------------------------+
-
-Train Job (same image) writes model → artifacts/checkpoints/final
++---------------------------+         +-------------------+
+|        Training Job       |         |    Streamlit UI   |
+|  (inside Docker)          |         |  :8510 (default)  |
+|   - Reads data/processed  | <-----> |  mounts artifacts |
+|   - Saves artifacts       |         +-------------------+
+|     /app/artifacts        |                 ↑
++-------------+-------------+                 |
+              |                               
+              v                                |
+      HOST: artifacts/ (bind mount)            |
+              ^                                |
++-------------+-------------+                 |
+|         FastAPI API       |                 |
+|   :8010 (default)         |  <--------------+
+|   loads MODEL_DIR==/app/artifacts/checkpoints/final
++---------------------------+
 ```
 
-**Containers** (all from the same Docker image):
-- **Trainer**: runs once to fine-tune and **write** artifacts to the host volume (bind mount)
-- **API (FastAPI)**: loads local model from volume, exposes `/predict` & `/healthz`
-- **UI (Streamlit)**: loads local model from volume for manual testing
+**Containers**
+- **Training:** runs via `ai_tweets.cli train` inside the image
+- **API:** `uvicorn ai_tweets.api:app` → `/predict`, `/healthz`, Swagger at `/docs`
+- **UI:** `streamlit_app.py` → manual testing; loads local **MODEL_DIR**
 
-**Volumes**:
-- `artifacts/` on host ↔ `/app/artifacts/` in container (bidirectional)
-
-**Default Ports**:
-- API: 8000 (configurable via `-ApiPort`)
-- UI:  8501 (configurable via `-UiPort`)
+**Volumes & Ports**
+- `artifacts/  ->  /app/artifacts` (bind mount)
+- API: `:8010->8000` (configurable) — UI: `:8510->8501` (configurable)
 
 ---
 
-## 🚀 Quick Start (Windows)
+## 🚀 Quick Start (Windows, PowerShell)
 
-> Prereqs: **Docker Desktop** (WSL2 backend recommended). GPU optional.
+> Ensure **Docker Desktop** is running. GPU is used if available.
 
-### A) Train + Launch (one command)
-From the repo root (the folder with `artifacts/` and `data/processed/`):
 ```powershell
+# 1) Choose image
 $Image = 'sandeep_pandey/crisis-llm:gpu-latest'
-powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all.ps1 -Image $Image
+
+# 2) Train + launch everything
+powershell -NoProfile -ExecutionPolicy Bypass -File .
+un_all.ps1 -Image $Image
+
+# Open:
+# - API docs:     http://localhost:8000/docs
+# - Streamlit UI: http://localhost:8501
 ```
-Open:
-- API docs → http://localhost:8000/docs
-- UI → http://localhost:8501
 
-> To change ports:
-> ```powershell
-> powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all.ps1 -Image $Image -ApiPort 8010 -UiPort 8510
-> ```
+Use different ports:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .
+un_all.ps1 -Image $Image -ApiPort 8010 -UiPort 8510
+```
 
-### B) Start Only (if you already have a trained model)
+### Start Only (if artifacts already exist)
+
 ```powershell
 $Image   = 'sandeep_pandey/crisis-llm:gpu-latest'
-$Arts    = "$PWD\artifacts"
+$Arts    = "$PWDrtifacts"
 $ApiPort = 8010
 $UiPort  = 8510
 
@@ -106,120 +103,120 @@ docker run -d --rm --name crisis-ui --gpus all `
   $Image streamlit run src/ai_tweets/streamlit_app.py --server.port 8501 --browser.gatherUsageStats false
 ```
 
----
-
-## 📡 API Reference
-
-- **`GET /healthz`** → `{ "ok": true }` when ready
-- **`POST /predict`** (JSON):
-  ```json
-  { "text": "Wildfire near the highway, evacuations underway" }
-  ```
-  **Response** (example):
-  ```json
-  {
-    "label": "disaster",
-    "score": 0.94,
-    "probs": [
-      {"label": "non_disaster", "score": 0.06},
-      {"label": "disaster", "score": 0.94}
-    ]
-  }
-  ```
-
-**PowerShell-safe test:**
+**API test (PowerShell‑safe JSON):**
 ```powershell
-$ApiPort = 8000
+$ApiPort = 8010
 $body = @{ text = "Wildfire near the highway, evacuations underway" } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:${ApiPort}/predict" -ContentType "application/json" -Body $body
 ```
 
 ---
 
-## 🧪 Training & Artifacts
+## 📁 Project Layout
 
-- Input CSVs (two columns): `data/processed/train.csv`, `data/processed/val.csv`
-- Output artifacts: `artifacts/checkpoints/final/`
-  - `model.safetensors`, `config.json`, `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, `sentencepiece.bpe.model`
-  - `metrics.json`, `confusion_matrix.png`
-
-Typical validation results:
-- **Accuracy**: ~88–89%
-- **F1**: ~0.85–0.86
-
----
-
-## ⚙️ Configuration (env vars)
-| Variable | Purpose | Default |
-|---|---|---|
-| `MODEL_DIR` | Where UI/API read the local model | `/app/artifacts/checkpoints/final` |
-| `HF_HUB_OFFLINE` | Force offline mode | `1` |
-| `TRANSFORMERS_OFFLINE` | Disable hub lookups | `1` |
-
----
-
-## 🛠️ Troubleshooting (real-world fixes)
-
-### 1) **Port already allocated**
-**Symptom:** Docker says `Bind for 0.0.0.0:8000 (or 8501) failed`.  
-**Fix:** Stop old containers or use different ports:
-```powershell
-docker rm -f crisis-api crisis-ui
-# or run with -ApiPort/-UiPort
+```
+.
+├─ data/
+│  └─ processed/
+│     ├─ train.csv
+│     └─ val.csv
+├─ artifacts/
+│  └─ checkpoints/
+│     └─ final/
+│        ├─ model.safetensors
+│        ├─ config.json
+│        ├─ tokenizer.json
+│        ├─ tokenizer_config.json
+│        ├─ special_tokens_map.json
+│        └─ sentencepiece.bpe.model
+├─ src/ai_tweets/
+│  ├─ api.py
+│  ├─ cli.py
+│  ├─ streamlit_app.py
+│  └─ train.py
+├─ run_all.ps1
+└─ README.md
 ```
 
-### 2) **Empty reply from server** on `/healthz`
-**Symptom:** `curl: (52) Empty reply from server` right after starting the API.  
-**Fix:** Wait a few seconds (model loading), then:
-```powershell
-docker logs crisis-api --tail 200
+---
+
+## 🧪 Model & Training
+
+- Base: **microsoft/Multilingual-MiniLM-L12-H384**
+- Typical validation: **Acc 88–89%**, **F1 0.85–0.86**
+- Config knobs: epochs, batch size, max length, learning rate (see `configs/gpu.yaml`)
+
+**Re‑training command used inside the container**
+```bash
+python -m ai_tweets.cli train   --config configs/gpu.yaml   --train-csv data/train.csv   --eval-csv  data/val.csv
 ```
 
-### 3) **HFValidationError** in Streamlit
-**Symptom:** Streamlit tries to treat a folder path as a Hub repo id.  
-**Fix:** Ensure `MODEL_DIR` points to the artifacts **directory** and set offline flags:
-```powershell
--e MODEL_DIR="/app/artifacts/checkpoints/final" -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
-```
+---
 
-### 4) **PowerShell execution policy blocked**
-**Symptom:** `run_all.ps1 is not digitally signed`.  
-**Fix:** run with `-ExecutionPolicy Bypass` as shown in Quick Start.
+## 🛠️ Troubleshooting (curated from real errors)
 
-### 5) **Accelerate/Trainer mismatch**
-**Symptom:** `Accelerator.unwrap_model() got an unexpected keyword argument 'keep_torch_compile'`.  
-**Fix:** The container’s training step upgrades `accelerate` internally to a compatible version before training.
+- **Port already allocated**  
+  Another process is using 8000/8501.
+  - Fix: stop old containers `docker rm -f crisis-api crisis-ui`
+  - Or pick other ports: `-ApiPort 8010 -UiPort 8510`
 
-### 6) **Dataset not found / wrong columns**
-**Symptom:** Train step exits early or crashes.  
-**Fix:** Put CSVs under `data/processed/` with **columns**: `text`, `labels` (0/1).
+- **Windows blocks scripts (UnauthorizedAccess/PSSecurityException)**  
+  Use:
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File .
+un_all.ps1 -Image $Image
+  ```
 
-### 7) **GPU not available**
-The image runs on CPU automatically (slower). Remove `--gpus all` if you don’t have NVIDIA runtime.
+- **`HFValidationError: Repo id must be in the form ... '/app/artifacts/checkpoints/final'`**  
+  Ensure **offline/local** loading by setting:
+  ```powershell
+  -e MODEL_DIR="/app/artifacts/checkpoints/final"
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
+  ```
+  (Already included in commands above.)
+
+- **`Accelerator.unwrap_model() got an unexpected keyword argument 'keep_torch_compile'`**  
+  Caused by an old `accelerate`. We upgrade before training inside the container:
+  ```bash
+  python -m pip install --upgrade "accelerate>=1.2.1" || true
+  ```
+
+- **PowerShell quoting / curl errors**  
+  Prefer `Invoke-RestMethod` (shown above) to avoid quoting pitfalls.
+
+- **`Empty reply from server`**  
+  The API may still be starting up. Re‑try after 5–10s or check logs:
+  ```powershell
+  docker logs crisis-api --tail 200
+  docker logs crisis-ui  --tail 200
+  ```
+
+- **Dataset not found**  
+  Put `train.csv` and `val.csv` in `data/processed/` **before** training.
 
 ---
 
-## 🔐 Security & Privacy
-- Everything runs **locally** by default. No tweets or predictions are sent to third parties.
-- Offline model loading avoids incidental calls to external model hubs.
+## 🔧 Environment Variables
+
+| Variable                | Purpose                                  | Default in examples |
+|-------------------------|------------------------------------------|---------------------|
+| `MODEL_DIR`             | Path to local checkpoint in container    | `/app/artifacts/checkpoints/final` |
+| `HF_HUB_OFFLINE`        | Force offline mode                       | `1`                 |
+| `TRANSFORMERS_OFFLINE`  | Force offline transformers/hub           | `1`                 |
 
 ---
 
-## 📈 Next Steps
-- Expand/refresh training data across event types and languages
-- Add drift monitoring & scheduled re-training
-- Quantization/distillation for CPU-only latency
-- CI/CD for container builds and smoke tests on `/healthz` & `/predict`
+## 📈 Emoji Changelog (high‑level)
+
+- 🚀 **v1.0**: First end‑to‑end training + serving; offline local model loading
+- 🧪 **v1.1**: Improved Windows Quick Start; PowerShell‑safe API examples
+- 🛡️ **v1.2**: Hardened error handling & troubleshooting guide
+- ⚡ **v1.3**: GPU/CPU auto‑detect; faster training defaults
 
 ---
 
-## 🙌 Acknowledgments
-- Hugging Face Transformers & Datasets
-- FastAPI, Uvicorn
-- Streamlit
-- Docker
+## 📝 License & Acknowledgments
 
----
-
-**Author:** Sandeep Pandey  
-**Repo:** https://github.com/sandeeppandey1108/Real-Time-LLM-System-for-Disaster-Tweet-Classification
+- Built with ❤️ on top of **Hugging Face Transformers**, **FastAPI**, **Streamlit**.
+- Model: `microsoft/Multilingual-MiniLM-L12-H384`.
+- See `LICENSE` for details.
