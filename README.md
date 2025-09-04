@@ -1,106 +1,86 @@
 
-
 # Real-Time LLM System for Disaster Tweet Classification
 
-![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker\&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111+-009688?logo=fastapi\&logoColor=white)
-![Streamlit](https://img.shields.io/badge/Streamlit-1.34+-FF4B4B?logo=streamlit\&logoColor=white)
-![Transformers](https://img.shields.io/badge/Transformers-4.56+-FF9A00?logo=huggingface\&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python\&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green)
+A reproducible, Dockerized system that **fine-tunes a multilingual transformer** to classify tweets as **disaster** or **non-disaster**, and serves the model via **FastAPI** and a **Streamlit** UI.
 
-> A lightweight multilingual transformer, fine-tuned to classify tweets as **disaster** vs **non-disaster**, served in real time via **FastAPI** and a friendly **Streamlit** UI. Fully containerized with **Docker** (GPU or CPU).
+> **Windows-first:** One PowerShell script (`run_all.ps1`) trains and launches everything. Works on GPU (preferred) or CPU.
 
 ---
 
-<p align="center">
-  <!-- Replace with an actual short demo GIF/screencast; keep file small -->
-  <img src="docs/demo.gif" alt="Demo of UI and API" width="720"/>
-  <br/>
-  <em>Tip: drop your own GIF at <code>docs/demo.gif</code> to make this banner “animated”.</em>
-</p>
+## 🔎 Highlights
+- **Model:** `microsoft/Multilingual-MiniLM-L12-H384` fine-tuned with Hugging Face Transformers
+- **Data:** `data/processed/train.csv` & `data/processed/val.csv` (two columns: `text`, `labels`)
+- **Artifacts:** Saved to `artifacts/checkpoints/final` (model, tokenizer, metrics, confusion matrix)
+- **Serving:** FastAPI (`/predict`, `/healthz`, Swagger at `/docs`), Streamlit demo UI
+- **Dockerized:** Single image for training + inference, GPU-ready (falls back to CPU)
+- **Offline-first:** UI/API load **local** checkpoint from `MODEL_DIR` (no Hub dependency)
 
 ---
 
-## Table of Contents
+## 🧭 System Architecture
 
-* [What’s Inside](#whats-inside)
-* [Architecture](#architecture)
-* [Prerequisites](#prerequisites)
-* [Quick Start (Windows – PowerShell)](#quick-start-windows--powershell)
-* [Quick Start (Linux/macOS – bash/zsh)](#quick-start-linuxmacos--bashzsh)
-* [Useful Endpoints & Examples](#useful-endpoints--examples)
-* [Artifacts & Files](#artifacts--files)
-* [Common Errors & Fixes](#common-errors--fixes)
-* [Tips & Performance](#tips--performance)
-* [Project Structure](#project-structure)
-* [License](#license)
+```
+User Browser
+   │
+   │  HTTP (localhost:8501)
+   ▼
++---------------------+
+|  Streamlit (UI)     |  ← container: $Image
+|  Port: 8501         |
++----------+----------+
+           │  REST call (/predict)
+           │  HTTP (localhost:8000)
+           ▼
++---------------------+
+|  FastAPI (API)      |  ← container: $Image
+|  Endpoints:         |      /healthz, /predict, /docs
+|  Port: 8000         |
++----------+----------+
+           │  reads
+           ▼
++-------------------------------+
+|  Model Artifacts (Volume)     |
+|  host: artifacts/checkpoints/ |
+|  container: /app/artifacts/   |
++-------------------------------+
 
----
-
-## What’s Inside
-
-* ✔️ **Fine-tuned model**: `microsoft/Multilingual-MiniLM-L12-H384`
-* 📊 **Metrics**: Accuracy ≈ **88–89%**, F1 ≈ **0.85–0.86** on validation
-* ⚙️ **Serving**: **FastAPI** (`/predict`, `/healthz`, `/docs`) + **Streamlit** UI
-* 📦 **Dockerized**: GPU-ready (uses CUDA if available); also runs on CPU
-* 🔁 **One-command pipeline**: `run_all.ps1` to train → serve API → launch UI
-* 🧳 **Offline-first**: UI & API load the **local checkpoint** (no HF Hub needed)
-
----
-
-## Architecture
-
-```mermaid
-flowchart LR
-  A[User] -->|text| B[Streamlit UI]
-  B -->|HTTP /predict| C[FastAPI]
-  C --> D[Local Model & Tokenizer<br/>artifacts/checkpoints/final]
-  E[Training CLI] --> D
-  subgraph Containerized
-    B
-    C
-    D
-  end
+Train Job (same image) writes model → artifacts/checkpoints/final
 ```
 
+**Containers** (all from the same Docker image):
+- **Trainer**: runs once to fine-tune and **write** artifacts to the host volume (bind mount)
+- **API (FastAPI)**: loads local model from volume, exposes `/predict` & `/healthz`
+- **UI (Streamlit)**: loads local model from volume for manual testing
+
+**Volumes**:
+- `artifacts/` on host ↔ `/app/artifacts/` in container (bidirectional)
+
+**Default Ports**:
+- API: 8000 (configurable via `-ApiPort`)
+- UI:  8501 (configurable via `-UiPort`)
+
 ---
 
-## Prerequisites
+## 🚀 Quick Start (Windows)
 
-* **Docker Desktop** (Windows with WSL2 recommended; Linux/macOS Docker works too)
-* (Optional) **NVIDIA GPU** + drivers + **NVIDIA Container Toolkit** for GPU acceleration
-* **Internet** for the first model pull *(training)*; serving uses local artifacts
+> Prereqs: **Docker Desktop** (WSL2 backend recommended). GPU optional.
 
-> **Windows PowerShell** may block scripts on first run. Use `-ExecutionPolicy Bypass` or `Unblock-File .\run_all.ps1`.
-
----
-
-## Quick Start (Windows – PowerShell)
-
-**A) Train + Launch (recommended on first run)**
-
+### A) Train + Launch (one command)
+From the repo root (the folder with `artifacts/` and `data/processed/`):
 ```powershell
-# 1) From repo root (folder containing artifacts/ and data/processed/)
 $Image = 'sandeep_pandey/crisis-llm:gpu-latest'
-
-# 2) Train + start API (FastAPI) + UI (Streamlit)
 powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all.ps1 -Image $Image
 ```
-
 Open:
+- API docs → http://localhost:8000/docs
+- UI → http://localhost:8501
 
-* API docs → [http://localhost:8000/docs](http://localhost:8000/docs)
-* Streamlit UI → [http://localhost:8501](http://localhost:8501)
-
-> Use custom ports:
->
+> To change ports:
 > ```powershell
 > powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all.ps1 -Image $Image -ApiPort 8010 -UiPort 8510
 > ```
 
-**B) Start Only (if you already trained)**
-
+### B) Start Only (if you already have a trained model)
 ```powershell
 $Image   = 'sandeep_pandey/crisis-llm:gpu-latest'
 $Arts    = "$PWD\artifacts"
@@ -117,7 +97,7 @@ docker run -d --rm --name crisis-api --gpus all `
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 `
   $Image uvicorn ai_tweets.api:app --host 0.0.0.0 --port 8000 --log-level info
 
-# UI (uses local artifacts only; no Hub lookups)
+# UI
 docker run -d --rm --name crisis-ui --gpus all `
   -p ${UiPort}:8501 `
   -v "${Arts}:/app/artifacts" `
@@ -128,263 +108,118 @@ docker run -d --rm --name crisis-ui --gpus all `
 
 ---
 
-## Quick Start (Linux/macOS – bash/zsh)
+## 📡 API Reference
 
-```bash
-# Repo root
-Image='sandeep_pandey/crisis-llm:gpu-latest'
+- **`GET /healthz`** → `{ "ok": true }` when ready
+- **`POST /predict`** (JSON):
+  ```json
+  { "text": "Wildfire near the highway, evacuations underway" }
+  ```
+  **Response** (example):
+  ```json
+  {
+    "label": "disaster",
+    "score": 0.94,
+    "probs": [
+      {"label": "non_disaster", "score": 0.06},
+      {"label": "disaster", "score": 0.94}
+    ]
+  }
+  ```
 
-# Train + launch (CPU or GPU)
-bash -lc 'pwsh -NoProfile -ExecutionPolicy Bypass -File ./run_all.ps1 -Image '"$Image"
-# Or start-only with docker run commands analogous to the Windows section
-```
-
-> If you don’t have PowerShell, you can translate the `docker run` commands from the Windows section to bash (identical flags).
-
----
-
-## Useful Endpoints & Examples
-
-**Swagger UI**
-
-* `GET /docs` → interactive docs
-
-**Health**
-
-* `GET /healthz` → `{"ok": true}` when API is ready
-
-**Prediction (PowerShell)**
-
+**PowerShell-safe test:**
 ```powershell
 $ApiPort = 8000
 $body = @{ text = "Wildfire near the highway, evacuations underway" } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:${ApiPort}/predict" -ContentType "application/json" -Body $body
 ```
 
-**Prediction (curl)**
+---
 
-```bash
-curl -X POST "http://localhost:8000/predict" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Wildfire near the highway, evacuations underway"}'
-```
+## 🧪 Training & Artifacts
+
+- Input CSVs (two columns): `data/processed/train.csv`, `data/processed/val.csv`
+- Output artifacts: `artifacts/checkpoints/final/`
+  - `model.safetensors`, `config.json`, `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, `sentencepiece.bpe.model`
+  - `metrics.json`, `confusion_matrix.png`
+
+Typical validation results:
+- **Accuracy**: ~88–89%
+- **F1**: ~0.85–0.86
 
 ---
 
-## Artifacts & Files
-
-After training, you should have:
-
-```
-artifacts/checkpoints/final/
-├─ config.json
-├─ model.safetensors
-├─ tokenizer.json
-├─ tokenizer_config.json
-├─ special_tokens_map.json
-└─ sentencepiece.bpe.model
-```
-
-The UI & API both load the **local** model from this directory (`MODEL_DIR=/app/artifacts/checkpoints/final` inside containers).
+## ⚙️ Configuration (env vars)
+| Variable | Purpose | Default |
+|---|---|---|
+| `MODEL_DIR` | Where UI/API read the local model | `/app/artifacts/checkpoints/final` |
+| `HF_HUB_OFFLINE` | Force offline mode | `1` |
+| `TRANSFORMERS_OFFLINE` | Disable hub lookups | `1` |
 
 ---
 
-## Common Errors & Fixes
+## 🛠️ Troubleshooting (real-world fixes)
 
-### 1) **Script is not digitally signed** (Windows)
-
-**Error**
-
+### 1) **Port already allocated**
+**Symptom:** Docker says `Bind for 0.0.0.0:8000 (or 8501) failed`.  
+**Fix:** Stop old containers or use different ports:
+```powershell
+docker rm -f crisis-api crisis-ui
+# or run with -ApiPort/-UiPort
 ```
-... run_all.ps1 is not digitally signed. You cannot run this script ...
+
+### 2) **Empty reply from server** on `/healthz`
+**Symptom:** `curl: (52) Empty reply from server` right after starting the API.  
+**Fix:** Wait a few seconds (model loading), then:
+```powershell
+docker logs crisis-api --tail 200
 ```
 
-**Fix**
+### 3) **HFValidationError** in Streamlit
+**Symptom:** Streamlit tries to treat a folder path as a Hub repo id.  
+**Fix:** Ensure `MODEL_DIR` points to the artifacts **directory** and set offline flags:
+```powershell
+-e MODEL_DIR="/app/artifacts/checkpoints/final" -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1
+```
 
-* Use the bypass flag:
+### 4) **PowerShell execution policy blocked**
+**Symptom:** `run_all.ps1 is not digitally signed`.  
+**Fix:** run with `-ExecutionPolicy Bypass` as shown in Quick Start.
 
-  ```powershell
-  powershell -NoProfile -ExecutionPolicy Bypass -File .\run_all.ps1 -Image $Image
-  ```
-* Or: `Unblock-File .\run_all.ps1`
+### 5) **Accelerate/Trainer mismatch**
+**Symptom:** `Accelerator.unwrap_model() got an unexpected keyword argument 'keep_torch_compile'`.  
+**Fix:** The container’s training step upgrades `accelerate` internally to a compatible version before training.
+
+### 6) **Dataset not found / wrong columns**
+**Symptom:** Train step exits early or crashes.  
+**Fix:** Put CSVs under `data/processed/` with **columns**: `text`, `labels` (0/1).
+
+### 7) **GPU not available**
+The image runs on CPU automatically (slower). Remove `--gpus all` if you don’t have NVIDIA runtime.
 
 ---
 
-### 2) **Ports already allocated**
-
-**Error**
-
-```
-Bind for 0.0.0.0:8000 failed: port is already allocated
-Bind for 0.0.0.0:8501 failed: port is already allocated
-```
-
-**Fix**
-
-* Stop old containers:
-
-  ```powershell
-  docker rm -f crisis-api crisis-ui
-  ```
-* Or use different ports:
-
-  ```powershell
-  -ApiPort 8010 -UiPort 8510
-  ```
+## 🔐 Security & Privacy
+- Everything runs **locally** by default. No tweets or predictions are sent to third parties.
+- Offline model loading avoids incidental calls to external model hubs.
 
 ---
 
-### 3) **Empty reply from server** on `/healthz` or `/predict`
-
-**Symptoms**
-
-* `curl: (52) Empty reply from server`
-* FastAPI container just started and is warming up
-  **Fix**
-* Wait a few seconds and retry.
-* Check container logs:
-
-  ```powershell
-  docker logs crisis-api --tail 200
-  ```
+## 📈 Next Steps
+- Expand/refresh training data across event types and languages
+- Add drift monitoring & scheduled re-training
+- Quantization/distillation for CPU-only latency
+- CI/CD for container builds and smoke tests on `/healthz` & `/predict`
 
 ---
 
-### 4) **HFValidationError** in Streamlit (loading local path)
-
-**Error**
-
-```
-HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/app/artifacts/checkpoints/final'
-```
-
-**Why**
-
-* `pipeline()` without “local only” semantics tries to treat the path like a hub repo id.
-  **Fix**
-* The included `streamlit_app.py` **forces local loading**:
-
-  ```python
-  tok = AutoTokenizer.from_pretrained(MODEL_DIR, local_files_only=True)
-  mdl = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR, local_files_only=True)
-  ```
-* Ensure `MODEL_DIR=/app/artifacts/checkpoints/final` is set and the directory contains the files listed in **Artifacts & Files**.
+## 🙌 Acknowledgments
+- Hugging Face Transformers & Datasets
+- FastAPI, Uvicorn
+- Streamlit
+- Docker
 
 ---
 
-### 5) **Accelerate unwrap\_model keep\_torch\_compile error during training**
-
-**Error**
-
-```
-TypeError: Accelerator.unwrap_model() got an unexpected keyword argument 'keep_torch_compile'
-```
-
-**Fix**
-
-* We upgrade `accelerate` in-container before training (already handled by the training command). If you train manually, run:
-
-  ```bash
-  python -m pip install --upgrade "accelerate>=1.2.1"
-  ```
-* Then re-run training.
-
----
-
-### 6) **DNS / HF transfer transient warnings**
-
-**Error Snippets**
-
-```
-... xethub.hf.co ... dns error ... failed to lookup address information ...
-```
-
-**Fix**
-
-* These are usually transient network issues or due to running in offline mode. For serving, we set:
-
-  ```bash
-  HF_HUB_OFFLINE=1
-  TRANSFORMERS_OFFLINE=1
-  ```
-* Ensure your **artifacts folder is complete** so no downloads are needed during serving.
-
----
-
-### 7) **PowerShell quoting / JSON escaping pitfalls**
-
-**Symptoms**
-
-* Weird errors from `curl` or variables like `:`
-  **Fix**
-* Prefer `Invoke-RestMethod` for JSON, or use `curl.exe` (not the PowerShell alias).
-* When a variable with `:` is inside quotes, use `${Var}` form in PS:
-
-  ```powershell
-  -p ${ApiPort}:8000
-  ```
-
----
-
-### 8) **No such container** when viewing logs
-
-**Error**
-
-```
-Error response from daemon: No such container: crisis-api
-```
-
-**Fix**
-
-* Start the container first (see Quick Start).
-* Or the container exited—check `docker ps -a`.
-
----
-
-## Tips & Performance
-
-* **GPU vs CPU**: If GPU is available, the containers will use it; else run on CPU (slower but OK).
-* **Batch predictions**: Add an endpoint or client batching for throughput.
-* **Further speedups**: Quantization (e.g., `bitsandbytes`) or distillation if targeting CPU-only.
-
----
-
-## Project Structure
-
-```
-.
-├─ artifacts/
-│  └─ checkpoints/
-│     └─ final/               # saved model & tokenizer (after training)
-├─ data/
-│  └─ processed/
-│     ├─ train.csv
-│     └─ val.csv
-├─ src/
-│  └─ ai_tweets/
-│     ├─ api.py               # FastAPI app
-│     ├─ cli.py               # Training entrypoint
-│     ├─ streamlit_app.py     # UI (local/offline model loading)
-│     └─ train.py             # Trainer (HF Transformers)
-├─ configs/
-│  └─ gpu.yaml                # training config (epochs, batch size, etc.)
-├─ run_all.ps1                # one-command train + serve script (Windows)
-└─ README.md
-```
-
----
-
-## License
-
-This project is released under the **MIT License**. See `LICENSE` for details.
-
----
-
-### Acknowledgements
-
-* Hugging Face 🤗 Transformers & Datasets
-* FastAPI, Uvicorn
-* Streamlit
-* Docker & NVIDIA Container Toolkit
-
----
+**Author:** Sandeep Pandey  
+**Repo:** https://github.com/sandeeppandey1108/Real-Time-LLM-System-for-Disaster-Tweet-Classification
