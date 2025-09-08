@@ -1,0 +1,13 @@
+
+seed: 42
+model_name: microsoft/Multilingual-MiniLM-L12-H384
+max_length: 128
+batch_size: 16
+epochs: 1000
+learning_rate: 0.001
+weight_decay: 0.01
+warmup_ratio: 0.06
+early_stopping_patience: 10
+early_stopping_threshold: 0.0001
+monitor_metric: f1
+greater_is_better: true
